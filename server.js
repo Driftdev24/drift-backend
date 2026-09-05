@@ -7,17 +7,23 @@ const path = require('path');
 const app = express();
 const server = http.createServer(app);
 
-// UPDATED: Added CORS configuration for separate frontend/backend hosting
+// UPDATED: Fixed CORS configuration. Removed the trailing slash and added an array 
+// to support both your live Vercel site and local testing.
 const io = new Server(server, {
   cors: {
-    origin: "https://drift-frontend-alpha.vercel.app/", // Change this to your Vercel URL (e.g., "https://drift.app") when in production for strict security.
-    methods: ["GET", "POST"]
+    origin: [
+      "https://drift-frontend-alpha.vercel.app", // Exact domain, NO trailing slash
+      "http://localhost:3000"                    // Keeps local testing active
+    ],
+    methods: ["GET", "POST"],
+    credentials: true
   }
 });
 
 app.use((req, res, next) => {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('X-Content-Type-Options', 'nosniff');
+  // Allow all for standard HTTP requests, Socket.io handles its own CORS above
   res.setHeader('Access-Control-Allow-Origin', '*'); 
   next();
 });
@@ -105,5 +111,5 @@ io.on('connection', (socket) => {
 });
 
 const PORT = process.env.PORT || 3000;
-// UPDATED: Listen on 0.0.0.0 for external hosting platforms like Fly.io
+// Render deployment hook
 server.listen(PORT, '0.0.0.0', () => console.log(`Drift Secure Server running on port ${PORT}`));
