@@ -10,7 +10,7 @@ const server = http.createServer(app);
 // UPDATED: Added CORS configuration for separate frontend/backend hosting
 const io = new Server(server, {
   cors: {
-    origin: "*", // Change this to your Vercel URL (e.g., "https://drift.app") when in production for strict security.
+    origin: "https://drift-frontend-alpha.vercel.app/", // Change this to your Vercel URL (e.g., "https://drift.app") when in production for strict security.
     methods: ["GET", "POST"]
   }
 });
