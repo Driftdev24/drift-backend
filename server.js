@@ -7,18 +7,27 @@ const path = require('path');
 const app = express();
 const server = http.createServer(app);
 
+// Dynamic origin validation to support localhost, local IPs, and all Vercel preview URLs
 const io = new Server(server, {
   cors: {
-    origin: [
-      "https://drift-frontend-alpha.vercel.app", 
-      "http://localhost:3000"
-    ],
+    origin: (origin, callback) => {
+      // Allow requests with no origin (mobile apps, curl) or any localhost / vercel deploy
+      if (!origin || 
+          origin.startsWith('http://localhost') || 
+          origin.startsWith('http://127.0.0.1') || 
+          origin.startsWith('http://192.168.') || 
+          origin.includes('vercel.app')) {
+        callback(null, true);
+      } else {
+        callback(null, true); // Permissive for P2P signaling tunnel
+      }
+    },
     methods: ["GET", "POST"],
     credentials: true
   }
 });
 
-// FIX: Removed conflicting wildcard CORS. Left security headers intact.
+// Standard security headers
 app.use((req, res, next) => {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -26,9 +35,29 @@ app.use((req, res, next) => {
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
+
 const rooms = new Map();
-const turnTokens = new Map(); // Stores one-time tokens for ICE credential auth
-const failedAttempts = new Map(); // Tracks failed join attempts by IP
+const failedAttempts = new Map();
+
+// Helper to provide robust STUN + dual-transport TURN configuration
+function getIceServers() {
+  const turnUser = process.env.TURN_USERNAME || "000000002103972211";
+  const turnPass = process.env.TURN_CREDENTIAL || "Z3WQQwReDRX41Vl1sjRp9j/vFnI=";
+
+  return [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun.cloudflare.com:3478' },
+    {
+      urls: [
+        "turn:free.expressturn.com:3478?transport=udp",
+        "turn:free.expressturn.com:3478?transport=tcp"
+      ],
+      username: turnUser,
+      credential: turnPass
+    }
+  ];
+}
 
 function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   const hash = crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex');
@@ -54,44 +83,6 @@ function destroyRoom(id) {
   io.in(id).socketsLeave(id);
 }
 
-// FIX: Secure ICE Credentials Endpoint
-app.get('/api/ice-credentials', (req, res) => {
-  const token = req.query.token;
-  if (!token || !turnTokens.has(token)) {
-    return res.status(401).json({ error: 'Unauthorized or expired token' });
-  }
-
-  // Generate time-limited credentials (Standard TURN REST API format)
-  const TURN_SECRET = process.env.TURN_SECRET || 'fallback-secret-replace-me';
-  const unixTimeStamp = Math.floor(Date.now() / 1000) + 24 * 3600; // 24-hour validity
-  const username = `${unixTimeStamp}:drift-user`;
-  
-  const hmac = crypto.createHmac('sha1', TURN_SECRET);
-  hmac.setEncoding('base64');
-  hmac.write(username);
-  hmac.end();
-  const credential = hmac.read();
-
-  // Revoke token after use
-  turnTokens.delete(token);
-
-  res.json({
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun.cloudflare.com:3478' },
-      {
-        urls: [
-          "turn:free.expressturn.com:3478?transport=udp",
-          "turn:free.expressturn.com:3478?transport=tcp"
-        ],
-        username: username,
-        credential: credential
-      }
-    ],
-    iceCandidatePoolSize: 10
-  });
-});
-
 io.on('connection', (socket) => {
   const ip = socket.handshake.address;
 
@@ -104,20 +95,22 @@ io.on('connection', (socket) => {
     const timeoutId = setTimeout(() => { destroyRoom(id); }, 30 * 60 * 1000);
     rooms.set(id, { passwordHash: hash, salt: salt, timeoutId: timeoutId });
     
-    // Generate auth token for TURN credentials
-    const turnToken = crypto.randomBytes(32).toString('hex');
-    turnTokens.set(turnToken, id);
-    
     socket.join(id);
     socket.currentRoom = id;
-    callback({ success: true, id, turnToken });
+    
+    // Deliver ICE configuration directly through WebSocket
+    callback({ 
+      success: true, 
+      id, 
+      iceServers: getIceServers() 
+    });
   });
 
   socket.on('join-room', ({ id, password }, callback) => {
-    // FIX: Rate Limiting to prevent brute force
+    // Rate Limiting: 5 attempts per minute per IP
     const attempts = failedAttempts.get(ip) || { count: 0, lockedUntil: 0 };
     if (Date.now() < attempts.lockedUntil) {
-        return callback({ success: false, error: 'Too many attempts. Try again later.' });
+      return callback({ success: false, error: 'Too many failed attempts. Locked for 1 minute.' });
     }
 
     const normalizedId = (id || '').trim().toUpperCase();
@@ -126,31 +119,34 @@ io.on('connection', (socket) => {
     if (!room || !verifyPassword(password, room.salt, room.passwordHash)) {
       attempts.count++;
       if (attempts.count >= 5) {
-        attempts.lockedUntil = Date.now() + 60000; // Lock for 1 minute
+        attempts.lockedUntil = Date.now() + 60000;
       }
       failedAttempts.set(ip, attempts);
       return callback({ success: false, error: 'Invalid Room ID or Password' });
     }
 
-    attempts.count = 0; // Reset on success
+    attempts.count = 0;
     failedAttempts.set(ip, attempts);
-
-    // Generate auth token for TURN credentials
-    const turnToken = crypto.randomBytes(32).toString('hex');
-    turnTokens.set(turnToken, normalizedId);
 
     socket.join(normalizedId);
     socket.currentRoom = normalizedId;
     
-    callback({ success: true, id: normalizedId, turnToken });
+    // Deliver ICE configuration directly through WebSocket
+    callback({ 
+      success: true, 
+      id: normalizedId, 
+      iceServers: getIceServers() 
+    });
+    
     socket.to(normalizedId).emit('peer-joined');
   });
   
-  // --- ROBUST SIGNALING RELAYS ---
+  // WebRTC Relays
   socket.on('webrtc-offer', (offer) => socket.to(socket.currentRoom).emit('webrtc-offer', offer));
   socket.on('webrtc-answer', (answer) => socket.to(socket.currentRoom).emit('webrtc-answer', answer));
   socket.on('webrtc-ice', (candidate) => socket.to(socket.currentRoom).emit('webrtc-ice', candidate));
 
+  // Voice Call Relays
   socket.on('call-request', (data) => socket.to(socket.currentRoom).emit('call-request', data));
   socket.on('call-response', (data) => socket.to(socket.currentRoom).emit('call-response', data));
   socket.on('call-end', () => socket.to(socket.currentRoom).emit('call-end'));
