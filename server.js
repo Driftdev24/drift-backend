@@ -97,6 +97,7 @@ io.on('connection', (socket) => {
     socket.join(id);
     socket.currentRoom = id;
     
+    // Deliver ICE configuration directly through WebSocket
     callback({ 
       success: true, 
       id, 
@@ -137,6 +138,7 @@ io.on('connection', (socket) => {
     socket.join(normalizedId);
     socket.currentRoom = normalizedId;
     
+    // Deliver ICE configuration directly through WebSocket
     callback({ 
       success: true, 
       id: normalizedId, 
