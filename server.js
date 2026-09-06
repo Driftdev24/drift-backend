@@ -11,7 +11,6 @@ const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
     origin: (origin, callback) => {
-      // Allow requests with no origin (mobile apps, curl) or any localhost / vercel deploy
       if (!origin || 
           origin.startsWith('http://localhost') || 
           origin.startsWith('http://127.0.0.1') || 
@@ -98,7 +97,6 @@ io.on('connection', (socket) => {
     socket.join(id);
     socket.currentRoom = id;
     
-    // Deliver ICE configuration directly through WebSocket
     callback({ 
       success: true, 
       id, 
@@ -116,6 +114,7 @@ io.on('connection', (socket) => {
     const normalizedId = (id || '').trim().toUpperCase();
     const room = rooms.get(normalizedId);
 
+    // 1. Authenticate Password
     if (!room || !verifyPassword(password, room.salt, room.passwordHash)) {
       attempts.count++;
       if (attempts.count >= 5) {
@@ -125,13 +124,19 @@ io.on('connection', (socket) => {
       return callback({ success: false, error: 'Invalid Room ID or Password' });
     }
 
+    // 2. Enforce Strict 2-Peer Maximum Capacity
+    const roomSockets = io.sockets.adapter.rooms.get(normalizedId);
+    if (roomSockets && roomSockets.size >= 2) {
+      return callback({ success: false, error: 'Access Denied: Room is already full (2/2).' });
+    }
+
+    // Reset attempts on success
     attempts.count = 0;
     failedAttempts.set(ip, attempts);
 
     socket.join(normalizedId);
     socket.currentRoom = normalizedId;
     
-    // Deliver ICE configuration directly through WebSocket
     callback({ 
       success: true, 
       id: normalizedId, 
@@ -154,6 +159,7 @@ io.on('connection', (socket) => {
   socket.on('call-answer', (answer) => socket.to(socket.currentRoom).emit('call-answer', answer));
   socket.on('call-ice', (candidate) => socket.to(socket.currentRoom).emit('call-ice', candidate));
 
+  // Auto-Destruction Triggers
   socket.on('shred-room', () => {
     if (socket.currentRoom) destroyRoom(socket.currentRoom);
   });
