@@ -7,7 +7,7 @@ const path = require('path');
 const app = express();
 const server = http.createServer(app);
 
-// Dynamic origin validation to support localhost, local IPs, and all Vercel preview URLs
+// Dynamic origin validation
 const io = new Server(server, {
   cors: {
     origin: (origin, callback) => {
@@ -97,16 +97,10 @@ io.on('connection', (socket) => {
     socket.join(id);
     socket.currentRoom = id;
     
-    // Deliver ICE configuration directly through WebSocket
-    callback({ 
-      success: true, 
-      id, 
-      iceServers: getIceServers() 
-    });
+    callback({ success: true, id, iceServers: getIceServers() });
   });
 
   socket.on('join-room', ({ id, password }, callback) => {
-    // Rate Limiting: 5 attempts per minute per IP
     const attempts = failedAttempts.get(ip) || { count: 0, lockedUntil: 0 };
     if (Date.now() < attempts.lockedUntil) {
       return callback({ success: false, error: 'Too many failed attempts. Locked for 1 minute.' });
@@ -115,7 +109,6 @@ io.on('connection', (socket) => {
     const normalizedId = (id || '').trim().toUpperCase();
     const room = rooms.get(normalizedId);
 
-    // 1. Authenticate Password
     if (!room || !verifyPassword(password, room.salt, room.passwordHash)) {
       attempts.count++;
       if (attempts.count >= 5) {
@@ -125,35 +118,25 @@ io.on('connection', (socket) => {
       return callback({ success: false, error: 'Invalid Room ID or Password' });
     }
 
-    // 2. Enforce Strict 2-Peer Maximum Capacity
     const roomSockets = io.sockets.adapter.rooms.get(normalizedId);
     if (roomSockets && roomSockets.size >= 2) {
       return callback({ success: false, error: 'Access Denied: Room is already full (2/2).' });
     }
 
-    // Reset attempts on success
     attempts.count = 0;
     failedAttempts.set(ip, attempts);
 
     socket.join(normalizedId);
     socket.currentRoom = normalizedId;
     
-    // Deliver ICE configuration directly through WebSocket
-    callback({ 
-      success: true, 
-      id: normalizedId, 
-      iceServers: getIceServers() 
-    });
-    
+    callback({ success: true, id: normalizedId, iceServers: getIceServers() });
     socket.to(normalizedId).emit('peer-joined');
   });
   
-  // WebRTC Relays
   socket.on('webrtc-offer', (offer) => socket.to(socket.currentRoom).emit('webrtc-offer', offer));
   socket.on('webrtc-answer', (answer) => socket.to(socket.currentRoom).emit('webrtc-answer', answer));
   socket.on('webrtc-ice', (candidate) => socket.to(socket.currentRoom).emit('webrtc-ice', candidate));
 
-  // Voice Call Relays
   socket.on('call-request', (data) => socket.to(socket.currentRoom).emit('call-request', data));
   socket.on('call-response', (data) => socket.to(socket.currentRoom).emit('call-response', data));
   socket.on('call-end', () => socket.to(socket.currentRoom).emit('call-end'));
@@ -161,7 +144,6 @@ io.on('connection', (socket) => {
   socket.on('call-answer', (answer) => socket.to(socket.currentRoom).emit('call-answer', answer));
   socket.on('call-ice', (candidate) => socket.to(socket.currentRoom).emit('call-ice', candidate));
 
-  // Auto-Destruction Triggers
   socket.on('shred-room', () => {
     if (socket.currentRoom) destroyRoom(socket.currentRoom);
   });
