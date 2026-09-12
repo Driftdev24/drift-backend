@@ -7,10 +7,10 @@ const path = require('path');
 const app = express();
 const server = http.createServer(app);
 
-// ADVANCED: Optimized Socket Ping intervals to keep Render's Load Balancers from dropping mobile connections
+// ADVANCED: Ultra-resilient socket ping limits for Mobile Networks
 const io = new Server(server, {
-  pingTimeout: 60000, 
-  pingInterval: 25000,
+  pingTimeout: 120000, 
+  pingInterval: 30000,
   cors: {
     origin: (origin, callback) => {
       if (!origin || 
@@ -47,18 +47,17 @@ setInterval(() => {
   }
 }, 15 * 60 * 1000);
 
-// ADVANCED: Aggressive ICE Server Array to punch through strict mobile/corporate Symmetric NATs
+// CRITICAL FIX: Perfectly formatted STUN/TURN array
 function getIceServers() {
   return [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun3.l.google.com:19302' },
-    { urls: 'stun:stun4.l.google.com:19302' },
-    { urls: 'stun:global.stun.twilio.com:3478?transport=udp' },
+    { urls: 'stun:stun.cloudflare.com:3478' },
+    { urls: 'stun:global.stun.twilio.com:3478' }, // Fixed: Removed ?transport=udp
     { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
     { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
-    { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
+    { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" } // TURN allows transport params
   ];
 }
 
@@ -86,6 +85,7 @@ function destroyRoom(id) {
   io.in(id).socketsLeave(id);
 }
 
+// Ensure we extract the true client IP (Bypasses Render's Load Balancer)
 function getClientIp(socket) {
   const forwarded = socket.handshake.headers['x-forwarded-for'];
   if (forwarded) return forwarded.split(',')[0].trim();
@@ -132,6 +132,8 @@ io.on('connection', (socket) => {
     socket.join(normalizedId); socket.currentRoom = normalizedId;
     
     callback({ success: true, id: normalizedId, iceServers: getIceServers() });
+    
+    // Broadcast to BOTH users so signaling can commence
     io.in(normalizedId).emit('peer-joined'); 
   });
   
