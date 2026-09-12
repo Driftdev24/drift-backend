@@ -114,9 +114,9 @@ io.on('connection', (socket) => {
 
   socket.on('join-room', ({ id, password }, callback) => {
     // FIX 1: Get the actual user IP, not the Render Load Balancer IP
-    const ip = socket.handshake.headers['x-forwarded-for'] || socket.handshake.address;
+    const actualIp = socket.handshake.headers['x-forwarded-for'] || socket.handshake.address;
     
-    const attempts = failedAttempts.get(ip) || { count: 0, lockedUntil: 0 };
+    const attempts = failedAttempts.get(actualIp) || { count: 0, lockedUntil: 0 };
     if (Date.now() < attempts.lockedUntil) {
       return callback({ success: false, error: 'Too many failed attempts. Locked for 1 minute.' });
     }
@@ -124,7 +124,7 @@ io.on('connection', (socket) => {
     const normalizedId = (id || '').trim().toUpperCase();
     const room = rooms.get(normalizedId);
 
-    // FIX 2: Check if the room actually exists (Server might have wiped it)
+    // FIX 2: Check if the room actually exists
     if (!room) {
       return callback({ success: false, error: 'Room does not exist. It may have expired or been destroyed.' });
     }
@@ -133,24 +133,14 @@ io.on('connection', (socket) => {
     if (!verifyPassword(password, room.salt, room.passwordHash)) {
       attempts.count++;
       if (attempts.count >= 5) attempts.lockedUntil = Date.now() + 60000;
-      failedAttempts.set(ip, attempts);
+      failedAttempts.set(actualIp, attempts);
       return callback({ success: false, error: 'Incorrect Password.' });
     }
 
     const roomSockets = io.sockets.adapter.rooms.get(normalizedId);
     if (roomSockets && roomSockets.size >= 2) return callback({ success: false, error: 'Access Denied: Room is already full (2/2).' });
 
-    attempts.count = 0; failedAttempts.set(ip, attempts);
-    socket.join(normalizedId); socket.currentRoom = normalizedId;
-    
-    callback({ success: true, id: normalizedId, iceServers: getIceServers() });
-    socket.to(normalizedId).emit('peer-joined');
-  });
-
-    const roomSockets = io.sockets.adapter.rooms.get(normalizedId);
-    if (roomSockets && roomSockets.size >= 2) return callback({ success: false, error: 'Access Denied: Room is already full (2/2).' });
-
-    attempts.count = 0; failedAttempts.set(ip, attempts);
+    attempts.count = 0; failedAttempts.set(actualIp, attempts);
     socket.join(normalizedId); socket.currentRoom = normalizedId;
     
     callback({ success: true, id: normalizedId, iceServers: getIceServers() });
