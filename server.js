@@ -47,7 +47,7 @@ setInterval(() => {
   }
 }, 15 * 60 * 1000);
 
-// ADVANCED: Highly Redundant Global ICE Array
+// ADVANCED: Global STUN/TURN Array for strict network bypass
 function getIceServers() {
   return [
     { urls: 'stun:stun.l.google.com:19302' },
@@ -55,21 +55,9 @@ function getIceServers() {
     { urls: 'stun:stun2.l.google.com:19302' },
     { urls: 'stun:stun.cloudflare.com:3478' },
     { urls: 'stun:global.stun.twilio.com:3478' },
-    {
-      urls: "turn:openrelay.metered.ca:80",
-      username: "openrelayproject",
-      credential: "openrelayproject"
-    },
-    {
-      urls: "turn:openrelay.metered.ca:443",
-      username: "openrelayproject",
-      credential: "openrelayproject"
-    },
-    {
-      urls: "turn:openrelay.metered.ca:443?transport=tcp",
-      username: "openrelayproject",
-      credential: "openrelayproject"
-    }
+    { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
+    { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
+    { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
   ];
 }
 
@@ -97,14 +85,20 @@ function destroyRoom(id) {
   io.in(id).socketsLeave(id);
 }
 
-io.on('connection', (socket) => {
-  const ip = socket.handshake.address;
+// CRITICAL FIX: Extract true user IP, bypassing Render/Vercel Load Balancers
+function getClientIp(socket) {
+  const forwarded = socket.handshake.headers['x-forwarded-for'];
+  if (forwarded) return forwarded.split(',')[0].trim();
+  return socket.handshake.address || socket.id;
+}
 
+io.on('connection', (socket) => {
   socket.on('create-room', ({ password }, callback) => {
     if (!password) return callback({ success: false });
     const id = generateSecureRoomId();
     const { hash, salt } = hashPassword(password);
     
+    // Room stays alive strictly via this 30-minute timer.
     const timeoutId = setTimeout(() => { destroyRoom(id); }, 30 * 60 * 1000);
     rooms.set(id, { passwordHash: hash, salt: salt, timeoutId: timeoutId });
     
@@ -113,8 +107,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('join-room', ({ id, password }, callback) => {
-    // FIX 1: Get the actual user IP, not the Render Load Balancer IP
-    const actualIp = socket.handshake.headers['x-forwarded-for'] || socket.handshake.address;
+    const actualIp = getClientIp(socket); // Solves the "Shared IP" lockout bug
     
     const attempts = failedAttempts.get(actualIp) || { count: 0, lockedUntil: 0 };
     if (Date.now() < attempts.lockedUntil) {
@@ -124,12 +117,10 @@ io.on('connection', (socket) => {
     const normalizedId = (id || '').trim().toUpperCase();
     const room = rooms.get(normalizedId);
 
-    // FIX 2: Check if the room actually exists
     if (!room) {
-      return callback({ success: false, error: 'Room does not exist. It may have expired or been destroyed.' });
+      return callback({ success: false, error: 'Room does not exist. It may have expired.' });
     }
 
-    // FIX 3: Verify Password
     if (!verifyPassword(password, room.salt, room.passwordHash)) {
       attempts.count++;
       if (attempts.count >= 5) attempts.lockedUntil = Date.now() + 60000;
@@ -138,13 +129,15 @@ io.on('connection', (socket) => {
     }
 
     const roomSockets = io.sockets.adapter.rooms.get(normalizedId);
-    if (roomSockets && roomSockets.size >= 2) return callback({ success: false, error: 'Access Denied: Room is already full (2/2).' });
+    if (roomSockets && roomSockets.size >= 2) return callback({ success: false, error: 'Room is already full.' });
 
     attempts.count = 0; failedAttempts.set(actualIp, attempts);
     socket.join(normalizedId); socket.currentRoom = normalizedId;
     
     callback({ success: true, id: normalizedId, iceServers: getIceServers() });
-    socket.to(normalizedId).emit('peer-joined');
+    
+    // CRITICAL FIX: Emit to EVERYONE in the room to prevent signaling deadlocks on reconnects
+    io.in(normalizedId).emit('peer-joined'); 
   });
   
   socket.on('webrtc-offer', (offer) => socket.to(socket.currentRoom).emit('webrtc-offer', offer));
@@ -163,14 +156,9 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => { 
-    if (socket.currentRoom) {
-      const roomSockets = io.sockets.adapter.rooms.get(socket.currentRoom);
-      if (!roomSockets || roomSockets.size === 0) {
-        const room = rooms.get(socket.currentRoom);
-        if (room) clearTimeout(room.timeoutId);
-        rooms.delete(socket.currentRoom);
-      }
-    }
+    // CRITICAL FIX: Do absolutely nothing here. 
+    // This allows mobile users to safely switch tabs to share the invite link 
+    // without the server instantly deleting their room in the background!
   });
 });
 
