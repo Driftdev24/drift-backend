@@ -7,9 +7,10 @@ const path = require('path');
 const app = express();
 const server = http.createServer(app);
 
+// ADVANCED: Optimized Socket Ping intervals to keep Render's Load Balancers from dropping mobile connections
 const io = new Server(server, {
-  pingTimeout: 120000, 
-  pingInterval: 30000,
+  pingTimeout: 60000, 
+  pingInterval: 25000,
   cors: {
     origin: (origin, callback) => {
       if (!origin || 
@@ -46,12 +47,18 @@ setInterval(() => {
   }
 }, 15 * 60 * 1000);
 
-// UNIVERSAL CONFIG: Lean, highly reliable STUN servers for instant cross-device connections
+// ADVANCED: Aggressive ICE Server Array to punch through strict mobile/corporate Symmetric NATs
 function getIceServers() {
   return [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun.cloudflare.com:3478' }
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
+    { urls: 'stun:global.stun.twilio.com:3478?transport=udp' },
+    { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
+    { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
+    { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
   ];
 }
 
@@ -144,7 +151,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => { 
-    // Handled purely by P2P heartbeat to allow background tab-switching on mobile
+    // Handled purely by P2P heartbeat to allow background tab-switching on mobile without deleting the room.
   });
 });
 
