@@ -7,7 +7,10 @@ const path = require('path');
 const app = express();
 const server = http.createServer(app);
 
+// ADVANCED: Ultra-resilient socket ping limits for Mobile Networks
 const io = new Server(server, {
+  pingTimeout: 120000, 
+  pingInterval: 30000,
   cors: {
     origin: (origin, callback) => {
       if (!origin || 
@@ -44,12 +47,14 @@ setInterval(() => {
   }
 }, 15 * 60 * 1000);
 
-// --- UPGRADED: Highly Reliable OpenRelay STUN/TURN Servers ---
+// ADVANCED: Highly Redundant Global ICE Array
 function getIceServers() {
   return [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
     { urls: 'stun:stun.cloudflare.com:3478' },
+    { urls: 'stun:global.stun.twilio.com:3478' },
     {
       urls: "turn:openrelay.metered.ca:80",
       username: "openrelayproject",
@@ -59,10 +64,14 @@ function getIceServers() {
       urls: "turn:openrelay.metered.ca:443",
       username: "openrelayproject",
       credential: "openrelayproject"
+    },
+    {
+      urls: "turn:openrelay.metered.ca:443?transport=tcp",
+      username: "openrelayproject",
+      credential: "openrelayproject"
     }
   ];
 }
-// --------------------------------------------------------------
 
 function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   const hash = crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex');
@@ -138,8 +147,20 @@ io.on('connection', (socket) => {
   socket.on('call-answer', (answer) => socket.to(socket.currentRoom).emit('call-answer', answer));
   socket.on('call-ice', (candidate) => socket.to(socket.currentRoom).emit('call-ice', candidate));
 
-  socket.on('shred-room', () => { if (socket.currentRoom) destroyRoom(socket.currentRoom); });
-  socket.on('disconnect', () => { if (socket.currentRoom) destroyRoom(socket.currentRoom); });
+  socket.on('shred-room', () => { 
+    if (socket.currentRoom) destroyRoom(socket.currentRoom); 
+  });
+
+  socket.on('disconnect', () => { 
+    if (socket.currentRoom) {
+      const roomSockets = io.sockets.adapter.rooms.get(socket.currentRoom);
+      if (!roomSockets || roomSockets.size === 0) {
+        const room = rooms.get(socket.currentRoom);
+        if (room) clearTimeout(room.timeoutId);
+        rooms.delete(socket.currentRoom);
+      }
+    }
+  });
 });
 
 const PORT = process.env.PORT || 3000;
