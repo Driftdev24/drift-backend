@@ -14,7 +14,8 @@ const io = new Server(server, {
           origin.startsWith('http://localhost') || 
           origin.startsWith('http://127.0.0.1') || 
           origin.startsWith('http://192.168.') || 
-          origin.includes('vercel.app')) {
+          origin.includes('vercel.app') ||
+          origin.includes('render.com')) {
         callback(null, true);
       } else {
         callback(null, true); 
@@ -46,7 +47,6 @@ setInterval(() => {
   }
 }, 15 * 60 * 1000);
 
-// Replace this specific function in your server.js
 function getIceServers() {
   const turnUser = process.env.TURN_USERNAME || "000000002103972211";
   const turnPass = process.env.TURN_CREDENTIAL || "Z3WQQwReDRX41Vl1sjRp9j/vFnI=";
@@ -54,8 +54,8 @@ function getIceServers() {
   return [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' }, // Added backup Google STUN
-    { urls: 'stun:global.stun.twilio.com:3478' }, // Added robust Twilio STUN
+    { urls: 'stun:stun2.l.google.com:19302' }, 
+    { urls: 'stun:global.stun.twilio.com:3478' }, 
     { urls: 'stun:stun.cloudflare.com:3478' },
     {
       urls: [
