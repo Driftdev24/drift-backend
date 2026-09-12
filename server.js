@@ -7,7 +7,6 @@ const path = require('path');
 const app = express();
 const server = http.createServer(app);
 
-// ADVANCED: Ultra-resilient socket ping limits for Mobile Networks
 const io = new Server(server, {
   pingTimeout: 120000, 
   pingInterval: 30000,
@@ -47,17 +46,12 @@ setInterval(() => {
   }
 }, 15 * 60 * 1000);
 
-// ADVANCED: Global STUN/TURN Array for strict network bypass
+// UNIVERSAL CONFIG: Lean, highly reliable STUN servers for instant cross-device connections
 function getIceServers() {
   return [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun.cloudflare.com:3478' },
-    { urls: 'stun:global.stun.twilio.com:3478' },
-    { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
-    { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
-    { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
+    { urls: 'stun:stun.cloudflare.com:3478' }
   ];
 }
 
@@ -85,7 +79,6 @@ function destroyRoom(id) {
   io.in(id).socketsLeave(id);
 }
 
-// CRITICAL FIX: Extract true user IP, bypassing Render/Vercel Load Balancers
 function getClientIp(socket) {
   const forwarded = socket.handshake.headers['x-forwarded-for'];
   if (forwarded) return forwarded.split(',')[0].trim();
@@ -98,7 +91,6 @@ io.on('connection', (socket) => {
     const id = generateSecureRoomId();
     const { hash, salt } = hashPassword(password);
     
-    // Room stays alive strictly via this 30-minute timer.
     const timeoutId = setTimeout(() => { destroyRoom(id); }, 30 * 60 * 1000);
     rooms.set(id, { passwordHash: hash, salt: salt, timeoutId: timeoutId });
     
@@ -107,7 +99,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('join-room', ({ id, password }, callback) => {
-    const actualIp = getClientIp(socket); // Solves the "Shared IP" lockout bug
+    const actualIp = getClientIp(socket); 
     
     const attempts = failedAttempts.get(actualIp) || { count: 0, lockedUntil: 0 };
     if (Date.now() < attempts.lockedUntil) {
@@ -117,9 +109,7 @@ io.on('connection', (socket) => {
     const normalizedId = (id || '').trim().toUpperCase();
     const room = rooms.get(normalizedId);
 
-    if (!room) {
-      return callback({ success: false, error: 'Room does not exist. It may have expired.' });
-    }
+    if (!room) return callback({ success: false, error: 'Room does not exist or has expired.' });
 
     if (!verifyPassword(password, room.salt, room.passwordHash)) {
       attempts.count++;
@@ -135,8 +125,6 @@ io.on('connection', (socket) => {
     socket.join(normalizedId); socket.currentRoom = normalizedId;
     
     callback({ success: true, id: normalizedId, iceServers: getIceServers() });
-    
-    // CRITICAL FIX: Emit to EVERYONE in the room to prevent signaling deadlocks on reconnects
     io.in(normalizedId).emit('peer-joined'); 
   });
   
@@ -156,9 +144,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => { 
-    // CRITICAL FIX: Do absolutely nothing here. 
-    // This allows mobile users to safely switch tabs to share the invite link 
-    // without the server instantly deleting their room in the background!
+    // Handled purely by P2P heartbeat to allow background tab-switching on mobile
   });
 });
 
