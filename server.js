@@ -37,36 +37,32 @@ app.use(express.static(path.join(__dirname, 'public')));
 const rooms = new Map();
 const failedAttempts = new Map();
 
-// Memory Management: Clear old rate limits every 15 minutes
 setInterval(() => {
   const now = Date.now();
   for (const [ip, data] of failedAttempts.entries()) {
-    if (now > data.lockedUntil && data.count === 0) {
-      failedAttempts.delete(ip);
-    }
+    if (now > data.lockedUntil && data.count === 0) failedAttempts.delete(ip);
   }
 }, 15 * 60 * 1000);
 
+// --- UPGRADED: Highly Reliable OpenRelay STUN/TURN Servers ---
 function getIceServers() {
-  const turnUser = process.env.TURN_USERNAME || "000000002103972211";
-  const turnPass = process.env.TURN_CREDENTIAL || "Z3WQQwReDRX41Vl1sjRp9j/vFnI=";
-
   return [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' }, 
-    { urls: 'stun:global.stun.twilio.com:3478' }, 
     { urls: 'stun:stun.cloudflare.com:3478' },
     {
-      urls: [
-        "turn:free.expressturn.com:3478?transport=udp",
-        "turn:free.expressturn.com:3478?transport=tcp"
-      ],
-      username: turnUser,
-      credential: turnPass
+      urls: "turn:openrelay.metered.ca:80",
+      username: "openrelayproject",
+      credential: "openrelayproject"
+    },
+    {
+      urls: "turn:openrelay.metered.ca:443",
+      username: "openrelayproject",
+      credential: "openrelayproject"
     }
   ];
 }
+// --------------------------------------------------------------
 
 function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   const hash = crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex');
@@ -97,58 +93,37 @@ io.on('connection', (socket) => {
 
   socket.on('create-room', ({ password }, callback) => {
     if (!password) return callback({ success: false });
-
     const id = generateSecureRoomId();
     const { hash, salt } = hashPassword(password);
     
     const timeoutId = setTimeout(() => { destroyRoom(id); }, 30 * 60 * 1000);
     rooms.set(id, { passwordHash: hash, salt: salt, timeoutId: timeoutId });
     
-    socket.join(id);
-    socket.currentRoom = id;
-    
-    callback({ 
-      success: true, 
-      id, 
-      iceServers: getIceServers() 
-    });
+    socket.join(id); socket.currentRoom = id;
+    callback({ success: true, id, iceServers: getIceServers() });
   });
 
   socket.on('join-room', ({ id, password }, callback) => {
     const attempts = failedAttempts.get(ip) || { count: 0, lockedUntil: 0 };
-    if (Date.now() < attempts.lockedUntil) {
-      return callback({ success: false, error: 'Too many failed attempts. Locked for 1 minute.' });
-    }
+    if (Date.now() < attempts.lockedUntil) return callback({ success: false, error: 'Too many failed attempts. Locked for 1 minute.' });
 
     const normalizedId = (id || '').trim().toUpperCase();
     const room = rooms.get(normalizedId);
 
     if (!room || !verifyPassword(password, room.salt, room.passwordHash)) {
       attempts.count++;
-      if (attempts.count >= 5) {
-        attempts.lockedUntil = Date.now() + 60000;
-      }
+      if (attempts.count >= 5) attempts.lockedUntil = Date.now() + 60000;
       failedAttempts.set(ip, attempts);
       return callback({ success: false, error: 'Invalid Room ID or Password' });
     }
 
     const roomSockets = io.sockets.adapter.rooms.get(normalizedId);
-    if (roomSockets && roomSockets.size >= 2) {
-      return callback({ success: false, error: 'Access Denied: Room is already full (2/2).' });
-    }
+    if (roomSockets && roomSockets.size >= 2) return callback({ success: false, error: 'Access Denied: Room is already full (2/2).' });
 
-    attempts.count = 0;
-    failedAttempts.set(ip, attempts);
-
-    socket.join(normalizedId);
-    socket.currentRoom = normalizedId;
+    attempts.count = 0; failedAttempts.set(ip, attempts);
+    socket.join(normalizedId); socket.currentRoom = normalizedId;
     
-    callback({ 
-      success: true, 
-      id: normalizedId, 
-      iceServers: getIceServers() 
-    });
-    
+    callback({ success: true, id: normalizedId, iceServers: getIceServers() });
     socket.to(normalizedId).emit('peer-joined');
   });
   
@@ -163,13 +138,8 @@ io.on('connection', (socket) => {
   socket.on('call-answer', (answer) => socket.to(socket.currentRoom).emit('call-answer', answer));
   socket.on('call-ice', (candidate) => socket.to(socket.currentRoom).emit('call-ice', candidate));
 
-  socket.on('shred-room', () => {
-    if (socket.currentRoom) destroyRoom(socket.currentRoom);
-  });
-
-  socket.on('disconnect', () => {
-    if (socket.currentRoom) destroyRoom(socket.currentRoom);
-  });
+  socket.on('shred-room', () => { if (socket.currentRoom) destroyRoom(socket.currentRoom); });
+  socket.on('disconnect', () => { if (socket.currentRoom) destroyRoom(socket.currentRoom); });
 });
 
 const PORT = process.env.PORT || 3000;
