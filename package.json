@@ -1,4 +1,8 @@
 {
+  "name": "drift-chat",
+  "version": "1.0.0",
+  "description": "Secure ephemeral WebRTC chat",
+  "main": "server.js",
   "dependencies": {
     "express": "^5.2.1",
     "socket.io": "^4.8.3"
