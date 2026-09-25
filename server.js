@@ -35,7 +35,8 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.static(path.join(__dirname, 'public')));
+// FIX 1: Serve flat frontend files from the root directory instead of a 'public' folder
+app.use(express.static(__dirname)); 
 
 const rooms = new Map();
 const failedAttempts = new Map();
@@ -54,10 +55,10 @@ function getIceServers() {
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
     { urls: 'stun:stun.cloudflare.com:3478' },
-    { urls: 'stun:global.stun.twilio.com:3478' }, // Fixed: Removed ?transport=udp
+    { urls: 'stun:global.stun.twilio.com:3478' }, 
     { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
     { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
-    { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" } // TURN allows transport params
+    { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
   ];
 }
 
@@ -126,15 +127,25 @@ io.on('connection', (socket) => {
     }
 
     const roomSockets = io.sockets.adapter.rooms.get(normalizedId);
-    if (roomSockets && roomSockets.size >= 2) return callback({ success: false, error: 'Room is already full.' });
+    
+    // FIX 3 (Part A): Count the occupants before allowing the join
+    const occupants = roomSockets ? roomSockets.size : 0;
+    
+    if (occupants >= 2) return callback({ success: false, error: 'Room is already full.' });
 
     attempts.count = 0; failedAttempts.set(actualIp, attempts);
     socket.join(normalizedId); socket.currentRoom = normalizedId;
     
-    callback({ success: true, id: normalizedId, iceServers: getIceServers() });
+    // FIX 3 (Part B): Dynamically assign the initiator role
+    callback({ 
+      success: true, 
+      id: normalizedId, 
+      iceServers: getIceServers(),
+      isInitiator: occupants === 0
+    });
     
-    // Broadcast to BOTH users so signaling can commence
-    io.in(normalizedId).emit('peer-joined'); 
+    // FIX 3 (Part C): Only emit to the OTHER user in the room, not to self
+    socket.to(normalizedId).emit('peer-joined'); 
   });
   
   socket.on('webrtc-offer', (offer) => socket.to(socket.currentRoom).emit('webrtc-offer', offer));
