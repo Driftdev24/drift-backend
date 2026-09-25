@@ -35,7 +35,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// FIX 1: Serve flat frontend files from the root directory instead of a 'public' folder
+// FIX: Serve flat frontend files from the root directory instead of a 'public' folder
 app.use(express.static(__dirname)); 
 
 const rooms = new Map();
@@ -128,7 +128,7 @@ io.on('connection', (socket) => {
 
     const roomSockets = io.sockets.adapter.rooms.get(normalizedId);
     
-    // FIX 3 (Part A): Count the occupants before allowing the join
+    // Count the occupants before allowing the join
     const occupants = roomSockets ? roomSockets.size : 0;
     
     if (occupants >= 2) return callback({ success: false, error: 'Room is already full.' });
@@ -136,7 +136,7 @@ io.on('connection', (socket) => {
     attempts.count = 0; failedAttempts.set(actualIp, attempts);
     socket.join(normalizedId); socket.currentRoom = normalizedId;
     
-    // FIX 3 (Part B): Dynamically assign the initiator role
+    // Dynamically assign the initiator role to avoid WebRTC deadlocks
     callback({ 
       success: true, 
       id: normalizedId, 
@@ -144,7 +144,7 @@ io.on('connection', (socket) => {
       isInitiator: occupants === 0
     });
     
-    // FIX 3 (Part C): Only emit to the OTHER user in the room, not to self
+    // Only emit to the OTHER user in the room, not to self
     socket.to(normalizedId).emit('peer-joined'); 
   });
   
