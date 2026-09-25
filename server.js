@@ -29,13 +29,22 @@ const io = new Server(server, {
   }
 });
 
+// FEATURE 3: Strict Content Security Policy (Zero-Exfiltration Header)
 app.use((req, res, next) => {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader(
+    "Content-Security-Policy",
+    "default-src 'self'; " +
+    "script-src 'self' 'unsafe-inline' https://cdn.socket.io; " +
+    "connect-src 'self' wss: ws: https: http: stun: turn:; " +
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+    "font-src 'self' https://fonts.gstatic.com;"
+  );
   next();
 });
 
-// FIX: Serve flat frontend files from the root directory instead of a 'public' folder
+// Serve flat frontend files from the root directory instead of a 'public' folder
 app.use(express.static(__dirname)); 
 
 const rooms = new Map();
@@ -48,7 +57,6 @@ setInterval(() => {
   }
 }, 15 * 60 * 1000);
 
-// CRITICAL FIX: Perfectly formatted STUN/TURN array
 function getIceServers() {
   return [
     { urls: 'stun:stun.l.google.com:19302' },
@@ -86,7 +94,6 @@ function destroyRoom(id) {
   io.in(id).socketsLeave(id);
 }
 
-// Ensure we extract the true client IP (Bypasses Render's Load Balancer)
 function getClientIp(socket) {
   const forwarded = socket.handshake.headers['x-forwarded-for'];
   if (forwarded) return forwarded.split(',')[0].trim();
@@ -127,8 +134,6 @@ io.on('connection', (socket) => {
     }
 
     const roomSockets = io.sockets.adapter.rooms.get(normalizedId);
-    
-    // Count the occupants before allowing the join
     const occupants = roomSockets ? roomSockets.size : 0;
     
     if (occupants >= 2) return callback({ success: false, error: 'Room is already full.' });
@@ -136,7 +141,6 @@ io.on('connection', (socket) => {
     attempts.count = 0; failedAttempts.set(actualIp, attempts);
     socket.join(normalizedId); socket.currentRoom = normalizedId;
     
-    // Dynamically assign the initiator role to avoid WebRTC deadlocks
     callback({ 
       success: true, 
       id: normalizedId, 
@@ -144,7 +148,6 @@ io.on('connection', (socket) => {
       isInitiator: occupants === 0
     });
     
-    // Only emit to the OTHER user in the room, not to self
     socket.to(normalizedId).emit('peer-joined'); 
   });
   
@@ -163,9 +166,7 @@ io.on('connection', (socket) => {
     if (socket.currentRoom) destroyRoom(socket.currentRoom); 
   });
 
-  socket.on('disconnect', () => { 
-    // Handled purely by P2P heartbeat to allow background tab-switching on mobile without deleting the room.
-  });
+  socket.on('disconnect', () => {});
 });
 
 const PORT = process.env.PORT || 3000;
